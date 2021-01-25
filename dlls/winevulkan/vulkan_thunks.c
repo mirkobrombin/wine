@@ -3351,6 +3351,22 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
             break;
         }
 
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_VALVE:
+        {
+            const VkPhysicalDeviceMutableDescriptorTypeFeaturesVALVE *in = (const VkPhysicalDeviceMutableDescriptorTypeFeaturesVALVE *)in_header;
+            VkPhysicalDeviceMutableDescriptorTypeFeaturesVALVE *out;
+
+            if (!(out = heap_alloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->mutableDescriptorType = in->mutableDescriptorType;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
         default:
             FIXME("Application requested a linked structure of type %u.\n", in_header->sType);
         }
@@ -5180,12 +5196,6 @@ static VkResult WINAPI wine_vkCreateValidationCacheEXT(VkDevice device, const Vk
     return device->funcs.p_vkCreateValidationCacheEXT(device->device, pCreateInfo, NULL, pValidationCache);
 }
 
-VkResult WINAPI wine_vkCreateWin32SurfaceKHR(VkInstance instance, const VkWin32SurfaceCreateInfoKHR *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkSurfaceKHR *pSurface)
-{
-    TRACE("%p, %p, %p, %p\n", instance, pCreateInfo, pAllocator, pSurface);
-    return instance->funcs.p_vkCreateWin32SurfaceKHR(instance->instance, pCreateInfo, NULL, pSurface);
-}
-
 VkResult thunk_vkDebugMarkerSetObjectNameEXT(VkDevice device, const VkDebugMarkerObjectNameInfoEXT *pNameInfo)
 {
 #if defined(USE_STRUCT_CONVERSION)
@@ -5374,12 +5384,6 @@ void WINAPI wine_vkDestroyShaderModule(VkDevice device, VkShaderModule shaderMod
 {
     TRACE("%p, 0x%s, %p\n", device, wine_dbgstr_longlong(shaderModule), pAllocator);
     device->funcs.p_vkDestroyShaderModule(device->device, shaderModule, NULL);
-}
-
-void WINAPI wine_vkDestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface, const VkAllocationCallbacks *pAllocator)
-{
-    TRACE("%p, 0x%s, %p\n", instance, wine_dbgstr_longlong(surface), pAllocator);
-    instance->funcs.p_vkDestroySurfaceKHR(instance->instance, surface, NULL);
 }
 
 void WINAPI wine_vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks *pAllocator)
@@ -7205,6 +7209,7 @@ static const char * const vk_device_extensions[] =
     "VK_QCOM_render_pass_store_ops",
     "VK_QCOM_render_pass_transform",
     "VK_QCOM_rotated_copy_commands",
+    "VK_VALVE_mutable_descriptor_type",
 };
 
 static const char * const vk_instance_extensions[] =
@@ -7257,7 +7262,8 @@ BOOL wine_vk_is_type_wrapped(VkObjectType type)
         type == VK_OBJECT_TYPE_DEVICE ||
         type == VK_OBJECT_TYPE_INSTANCE ||
         type == VK_OBJECT_TYPE_PHYSICAL_DEVICE ||
-        type == VK_OBJECT_TYPE_QUEUE;
+        type == VK_OBJECT_TYPE_QUEUE ||
+        type == VK_OBJECT_TYPE_SURFACE_KHR;
 }
 
 uint64_t wine_vk_unwrap_handle(VkObjectType type, uint64_t handle)
@@ -7280,6 +7286,8 @@ uint64_t wine_vk_unwrap_handle(VkObjectType type, uint64_t handle)
         return (uint64_t) (uintptr_t) ((VkPhysicalDevice) (uintptr_t) handle)->phys_dev;
     case VK_OBJECT_TYPE_QUEUE:
         return (uint64_t) (uintptr_t) ((VkQueue) (uintptr_t) handle)->queue;
+    case VK_OBJECT_TYPE_SURFACE_KHR:
+        return (uint64_t) wine_surface_from_handle(handle)->base.surface;
     default:
        return handle;
     }

@@ -41,7 +41,7 @@
 # define __ASM_CFI(str)
 #endif
 
-#ifdef __SEH__
+#if defined(__SEH__) || (defined(_MSC_VER) && defined(__clang__) && (defined(__x86_64__) || defined(__aarch64__)))
 # if defined(__aarch64__) && defined(__clang_major__) && (__clang_major__ < 12 || defined(__apple_build_version__))
    /* Clang got support for aarch64 SEH assembly directives in Clang 12,
     * before that, only .seh_startproc/.seh_endproc but nothing else was
@@ -56,10 +56,12 @@
 #endif
 
 #ifdef _WIN32
-# define __ASM_FUNC_TYPE(name) ".def " name "; .scl 2; .type 32; .endef"
+# define __ASM_FUNC_TYPE(name) ".def " name "\n\t.scl 2\n\t.type 32\n\t.endef"
 #elif defined(__APPLE__)
 # define __ASM_FUNC_TYPE(name) ""
-#elif defined(__arm__) || defined(__arm64__)
+#elif defined(__arm__) && defined(__thumb__)
+# define __ASM_FUNC_TYPE(name) ".type " name ",%function\n\t.thumb_func"
+#elif defined(__arm__) || defined(__aarch64__)
 # define __ASM_FUNC_TYPE(name) ".type " name ",%function"
 #else
 # define __ASM_FUNC_TYPE(name) ".type " name ",@function"

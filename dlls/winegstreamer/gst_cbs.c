@@ -136,19 +136,6 @@ static void call_cb(struct cb_data *cbdata)
     pthread_mutex_destroy(&cbdata->lock);
 }
 
-GstBusSyncReply watch_bus_wrapper(GstBus *bus, GstMessage *msg, gpointer user)
-{
-    struct cb_data cbdata = { WATCH_BUS };
-
-    cbdata.u.watch_bus_data.bus = bus;
-    cbdata.u.watch_bus_data.msg = msg;
-    cbdata.u.watch_bus_data.user = user;
-
-    call_cb(&cbdata);
-
-    return cbdata.u.watch_bus_data.ret;
-}
-
 void existing_new_pad_wrapper(GstElement *bin, GstPad *pad, gpointer user)
 {
     struct cb_data cbdata = { EXISTING_NEW_PAD };
@@ -259,34 +246,6 @@ void removed_decoded_pad_wrapper(GstElement *bin, GstPad *pad, gpointer user)
     cbdata.u.pad_removed_data.element = bin;
     cbdata.u.pad_removed_data.pad = pad;
     cbdata.u.pad_removed_data.user = user;
-
-    call_cb(&cbdata);
-}
-
-GstAutoplugSelectResult autoplug_blacklist_wrapper(GstElement *bin, GstPad *pad,
-        GstCaps *caps, GstElementFactory *fact, gpointer user)
-{
-    struct cb_data cbdata = { AUTOPLUG_BLACKLIST };
-
-    cbdata.u.autoplug_blacklist_data.bin = bin;
-    cbdata.u.autoplug_blacklist_data.pad = pad;
-    cbdata.u.autoplug_blacklist_data.caps = caps;
-    cbdata.u.autoplug_blacklist_data.fact = fact;
-    cbdata.u.autoplug_blacklist_data.user = user;
-
-    call_cb(&cbdata);
-
-    return cbdata.u.autoplug_blacklist_data.ret;
-}
-
-void unknown_type_wrapper(GstElement *bin, GstPad *pad, GstCaps *caps, gpointer user)
-{
-    struct cb_data cbdata = { UNKNOWN_TYPE };
-
-    cbdata.u.unknown_type_data.bin = bin;
-    cbdata.u.unknown_type_data.pad = pad;
-    cbdata.u.unknown_type_data.caps = caps;
-    cbdata.u.unknown_type_data.user = user;
 
     call_cb(&cbdata);
 }

@@ -760,6 +760,7 @@ static void close_recordset( struct recordset *recordset )
     ULONG row, col, col_count;
 
     if ( recordset->row_set ) IRowset_Release( recordset->row_set );
+    recordset->row_set = NULL;
 
     if (!recordset->fields) return;
     col_count = get_column_count( recordset );
@@ -1277,6 +1278,8 @@ static HRESULT WINAPI recordset_put_CursorLocation( _Recordset *iface, CursorLoc
     struct recordset *recordset = impl_from_Recordset( iface );
 
     TRACE( "%p, %u\n", iface, cursor_loc );
+
+    if (recordset->state == adStateOpen) return MAKE_ADO_HRESULT( adErrObjectOpen );
 
     recordset->cursor_location = cursor_loc;
 

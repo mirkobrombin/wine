@@ -560,7 +560,8 @@ static void adapter_vk_get_wined3d_caps(const struct wined3d_adapter *adapter, s
 {
     const struct wined3d_adapter_vk *adapter_vk = wined3d_adapter_vk_const(adapter);
     const VkPhysicalDeviceLimits *limits = &adapter_vk->device_limits;
-    BOOL sampler_anisotropy = limits->maxSamplerAnisotropy > 1.0f;
+    bool sampler_anisotropy = limits->maxSamplerAnisotropy > 1.0f;
+    const struct wined3d_vk_info *vk_info = &adapter_vk->vk_info;
 
     caps->ddraw_caps.dds_caps |= WINEDDSCAPS_BACKBUFFER
             | WINEDDSCAPS_COMPLEX
@@ -615,8 +616,9 @@ static void adapter_vk_get_wined3d_caps(const struct wined3d_adapter *adapter, s
             | WINED3DPTADDRESSCAPS_CLAMP
             | WINED3DPTADDRESSCAPS_WRAP;
     caps->VolumeTextureAddressCaps |= WINED3DPTADDRESSCAPS_BORDER
-            | WINED3DPTADDRESSCAPS_MIRROR
-            | WINED3DPTADDRESSCAPS_MIRRORONCE;
+            | WINED3DPTADDRESSCAPS_MIRROR;
+    if (vk_info->supported[WINED3D_VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE])
+        caps->VolumeTextureAddressCaps |= WINED3DPTADDRESSCAPS_MIRRORONCE;
 
     caps->MaxVolumeExtent = limits->maxImageDimension3D;
 
@@ -643,8 +645,9 @@ static void adapter_vk_get_wined3d_caps(const struct wined3d_adapter *adapter, s
     }
 
     caps->TextureAddressCaps |= WINED3DPTADDRESSCAPS_BORDER
-            | WINED3DPTADDRESSCAPS_MIRROR
-            | WINED3DPTADDRESSCAPS_MIRRORONCE;
+            | WINED3DPTADDRESSCAPS_MIRROR;
+    if (vk_info->supported[WINED3D_VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE])
+        caps->TextureAddressCaps |= WINED3DPTADDRESSCAPS_MIRRORONCE;
 
     caps->StencilCaps |= WINED3DSTENCILCAPS_DECR
             | WINED3DSTENCILCAPS_INCR
@@ -762,7 +765,6 @@ static void *wined3d_bo_vk_map(struct wined3d_bo_vk *bo, struct wined3d_context_
     const struct wined3d_vk_info *vk_info;
     struct wined3d_device_vk *device_vk;
     struct wined3d_bo_slab_vk *slab;
-    void *map_ptr;
     VkResult vr;
 
     if (bo->map_ptr)
@@ -773,33 +775,29 @@ static void *wined3d_bo_vk_map(struct wined3d_bo_vk *bo, struct wined3d_context_
 
     if ((slab = bo->slab))
     {
-        if (!(map_ptr = slab->map_ptr) && !(map_ptr = wined3d_bo_vk_map(&slab->bo, context_vk)))
+        if (!(bo->map_ptr = wined3d_bo_slab_vk_map(slab, context_vk)))
         {
             ERR("Failed to map slab.\n");
             return NULL;
         }
-        ++slab->map_count;
     }
     else if (bo->memory)
     {
         struct wined3d_allocator_chunk_vk *chunk_vk = wined3d_allocator_chunk_vk(bo->memory->chunk);
 
-        if (!(map_ptr = wined3d_allocator_chunk_vk_map(chunk_vk, context_vk)))
+        if (!(bo->map_ptr = wined3d_allocator_chunk_vk_map(chunk_vk, context_vk)))
         {
             ERR("Failed to map chunk.\n");
             return NULL;
         }
     }
-    else if ((vr = VK_CALL(vkMapMemory(device_vk->vk_device, bo->vk_memory, 0, VK_WHOLE_SIZE, 0, &map_ptr))) < 0)
+    else if ((vr = VK_CALL(vkMapMemory(device_vk->vk_device, bo->vk_memory, 0, VK_WHOLE_SIZE, 0, &bo->map_ptr))) < 0)
     {
         ERR("Failed to map memory, vr %s.\n", wined3d_debug_vkresult(vr));
         return NULL;
     }
 
-    if (sizeof(map_ptr) >= sizeof(uint64_t))
-        bo->map_ptr = map_ptr;
-
-    return map_ptr;
+    return bo->map_ptr;
 }
 
 static void wined3d_bo_vk_unmap(struct wined3d_bo_vk *bo, struct wined3d_context_vk *context_vk)
@@ -808,26 +806,50 @@ static void wined3d_bo_vk_unmap(struct wined3d_bo_vk *bo, struct wined3d_context
     struct wined3d_device_vk *device_vk;
     struct wined3d_bo_slab_vk *slab;
 
-    if (bo->map_ptr)
+    if (wined3d_map_persistent())
         return;
+
+    bo->map_ptr = NULL;
 
     if ((slab = bo->slab))
     {
-        if (--slab->map_count)
-            return;
+        wined3d_bo_slab_vk_unmap(slab, context_vk);
+        return;
+    }
 
-        wined3d_bo_vk_unmap(&slab->bo, context_vk);
-        slab->map_ptr = NULL;
+    if (bo->memory)
+    {
+        wined3d_allocator_chunk_vk_unmap(wined3d_allocator_chunk_vk(bo->memory->chunk), context_vk);
         return;
     }
 
     vk_info = context_vk->vk_info;
     device_vk = wined3d_device_vk(context_vk->c.device);
+    VK_CALL(vkUnmapMemory(device_vk->vk_device, bo->vk_memory));
+}
 
-    if (bo->memory)
-        wined3d_allocator_chunk_vk_unmap(wined3d_allocator_chunk_vk(bo->memory->chunk), context_vk);
-    else
-        VK_CALL(vkUnmapMemory(device_vk->vk_device, bo->vk_memory));
+void *wined3d_bo_slab_vk_map(struct wined3d_bo_slab_vk *slab_vk, struct wined3d_context_vk *context_vk)
+{
+    TRACE("slab_vk %p, context_vk %p.\n", slab_vk, context_vk);
+
+    if (!slab_vk->map_ptr && !(slab_vk->map_ptr = wined3d_bo_vk_map(&slab_vk->bo, context_vk)))
+    {
+        ERR("Failed to map slab.\n");
+        return NULL;
+    }
+
+    ++slab_vk->map_count;
+
+    return slab_vk->map_ptr;
+}
+
+void wined3d_bo_slab_vk_unmap(struct wined3d_bo_slab_vk *slab_vk, struct wined3d_context_vk *context_vk)
+{
+    if (--slab_vk->map_count)
+        return;
+
+    wined3d_bo_vk_unmap(&slab_vk->bo, context_vk);
+    slab_vk->map_ptr = NULL;
 }
 
 static VkAccessFlags vk_access_mask_from_buffer_usage(VkBufferUsageFlags usage)
@@ -2006,6 +2028,7 @@ static bool adapter_vk_init_driver_info(struct wined3d_adapter_vk *adapter_vk,
     const struct wined3d_gpu_description *gpu_description;
     struct wined3d_gpu_description description;
     UINT64 vram_bytes, sysmem_bytes;
+    const VkMemoryType *type;
     const VkMemoryHeap *heap;
     unsigned int i;
 
@@ -2026,6 +2049,12 @@ static bool adapter_vk_init_driver_info(struct wined3d_adapter_vk *adapter_vk,
     }
     TRACE("Total device memory: 0x%s.\n", wine_dbgstr_longlong(vram_bytes));
     TRACE("Total shared system memory: 0x%s.\n", wine_dbgstr_longlong(sysmem_bytes));
+
+    for (i = 0; i < memory_properties->memoryTypeCount; ++i)
+    {
+        type = &memory_properties->memoryTypes[i];
+        TRACE("Memory type [%u]: flags %#x, heap %u.\n", i, type->propertyFlags, type->heapIndex);
+    }
 
     if (!(gpu_description = wined3d_get_user_override_gpu_description(properties->vendorID, properties->deviceID)))
         gpu_description = wined3d_get_gpu_description(properties->vendorID, properties->deviceID);
@@ -2144,6 +2173,7 @@ static bool wined3d_adapter_vk_init_device_extensions(struct wined3d_adapter_vk 
         {VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,          ~0u},
         {VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME,    ~0u,                true},
         {VK_KHR_MAINTENANCE1_EXTENSION_NAME,                VK_API_VERSION_1_1, true},
+        {VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME,VK_API_VERSION_1_2},
         {VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME,      VK_API_VERSION_1_1, true},
         {VK_KHR_SWAPCHAIN_EXTENSION_NAME,                   ~0u,                true},
     };
@@ -2155,7 +2185,8 @@ static bool wined3d_adapter_vk_init_device_extensions(struct wined3d_adapter_vk 
     }
     map[] =
     {
-        {VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,  WINED3D_VK_EXT_TRANSFORM_FEEDBACK},
+        {VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,           WINED3D_VK_EXT_TRANSFORM_FEEDBACK},
+        {VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME, WINED3D_VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE},
     };
 
     if ((vr = VK_CALL(vkEnumerateDeviceExtensionProperties(physical_device, NULL, &count, NULL))) < 0)

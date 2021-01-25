@@ -605,7 +605,7 @@ static struct gdi_font_family *create_family( const WCHAR *name, const WCHAR *se
 
     family->refcount = 1;
     lstrcpynW( family->family_name, name, LF_FACESIZE );
-    if (second_name && second_name[0])
+    if (second_name && second_name[0] && wcsicmp( name, second_name ))
     {
         lstrcpynW( family->second_name, second_name, LF_FACESIZE );
         add_gdi_font_subst( second_name, -1, name, -1 );
@@ -913,7 +913,7 @@ static BOOL insert_face_in_family_list( struct gdi_font_face *face, struct gdi_f
                    debugstr_w(face->full_name), debugstr_w(family->family_name),
                    cursor->version, face->version );
 
-            if (face->file && !wcsicmp( face->file, cursor->file ))
+            if (face->file && cursor->file && !wcsicmp( face->file, cursor->file ))
             {
                 cursor->refcount++;
                 TRACE("Font %s already in list, refcount now %d\n",
@@ -1717,11 +1717,7 @@ static struct gdi_font *alloc_gdi_font( const WCHAR *file, void *data_ptr, SIZE_
         font->data_size = data_size;
     }
 
-    if (!(font->handle = alloc_font_handle( font )))
-    {
-        HeapFree( GetProcessHeap(), 0, font );
-        return NULL;
-    }
+    font->handle = alloc_font_handle( font );
     return font;
 }
 
@@ -2910,15 +2906,17 @@ static UINT get_glyph_index( struct gdi_font *font, UINT glyph )
         glyph = get_glyph_index_symbol( font, wc );
         if (!glyph)
         {
-            if (WideCharToMultiByte( CP_ACP, 0, &wc, 1, &ch, 1, NULL, NULL ))
+            if (WideCharToMultiByte( CP_ACP, WC_NO_BEST_FIT_CHARS, &wc, 1, &ch, 1, NULL, NULL ))
                 glyph = get_glyph_index_symbol( font, (unsigned char)ch );
         }
     }
-    else if (WideCharToMultiByte( font->codepage, 0, &wc, 1, &ch, 1, NULL, &used ) && !used)
+    else if (WideCharToMultiByte( font->codepage, WC_NO_BEST_FIT_CHARS, &wc, 1, &ch, 1, NULL, &used ) && !used)
     {
         glyph = (unsigned char)ch;
         font_funcs->get_glyph_index( font, &glyph, FALSE );
     }
+    else return 0;
+
     return glyph;
 }
 
@@ -2957,6 +2955,7 @@ static DWORD get_glyph_outline( struct gdi_font *font, UINT glyph, UINT format,
         /* Windows bitmap font, e.g. Small Fonts, uses ANSI character code
            as glyph index. "Treasure Adventure Game" depends on this. */
         font_funcs->get_glyph_index( font, &index, FALSE );
+        format &= ~GGO_GLYPH_INDEX;
         /* TODO: Window also turns off tategaki for glyphs passed in by index
             if their unicode code points fall outside of the range that is
             rotated. */
@@ -2971,8 +2970,6 @@ static DWORD get_glyph_outline( struct gdi_font *font, UINT glyph, UINT format,
             if (index == orig) tategaki = check_unicode_tategaki( glyph );
         }
     }
-
-    format &= ~(GGO_GLYPH_INDEX | GGO_UNHINTED);
 
     if (mat && !memcmp( mat, &identity, sizeof(*mat) )) mat = NULL;
 
@@ -3221,7 +3218,7 @@ static DWORD CDECL font_GetGlyphIndices( PHYSDEV dev, const WCHAR *str, INT coun
                 if (str[i] >= 0xf020 && str[i] <= 0xf100) glyph = str[i] - 0xf000;
                 else if (str[i] < 0x100) glyph = str[i];
             }
-            else if (WideCharToMultiByte( physdev->font->codepage, 0, &str[i], 1,
+            else if (WideCharToMultiByte( physdev->font->codepage, WC_NO_BEST_FIT_CHARS, &str[i], 1,
                                           &ch, 1, NULL, &used ) && !used)
                 glyph = (unsigned char)ch;
         }
@@ -3761,9 +3758,9 @@ static HFONT CDECL font_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
 
         font = select_font( &lf, dcmat, can_use_bitmap );
 
-        if (font && !*aa_flags)
+        if (font)
         {
-            *aa_flags = font->aa_flags;
+            if (!*aa_flags) *aa_flags = font->aa_flags;
             if (!*aa_flags)
             {
                 if (lf.lfQuality == CLEARTYPE_QUALITY || lf.lfQuality == CLEARTYPE_NATURAL_QUALITY)
@@ -6887,6 +6884,7 @@ BOOL WINAPI CreateScalableFontResourceW( DWORD hidden, LPCWSTR resource_file,
     fontdir.dfReserved        = 0;
     WideCharToMultiByte( CP_ACP, 0, (WCHAR *)font->otm.otmpFamilyName, -1,
                          fontdir.szFaceName, LF_FACESIZE, NULL, NULL );
+    free_gdi_font( font );
 
     if (hidden) fontdir.dfType |= 0x80;
     return create_fot( resource_file, font_file, &fontdir );

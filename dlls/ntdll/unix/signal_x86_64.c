@@ -240,10 +240,6 @@ struct stack_layout
     CONTEXT           context;
     CONTEXT_EX        context_ex;
     EXCEPTION_RECORD  rec;
-    ULONG64           rsi;
-    ULONG64           rdi;
-    ULONG64           rbp;
-    ULONG64           rip;
     ULONG64           align;
     char              xstate[0]; /* If xstate is present it is allocated
                                   * dynamically to provide 64 byte alignment. */
@@ -252,7 +248,23 @@ struct stack_layout
 C_ASSERT((offsetof(struct stack_layout, xstate) == sizeof(struct stack_layout)));
 
 C_ASSERT( sizeof(XSTATE) == 0x140 );
-C_ASSERT( sizeof(struct stack_layout) == 0x5b0 ); /* Should match the size in call_user_exception_dispatcher(). */
+C_ASSERT( sizeof(struct stack_layout) == 0x590 ); /* Should match the size in call_user_exception_dispatcher(). */
+
+/* stack layout when calling an user apc function.
+ * FIXME: match Windows ABI. */
+struct apc_stack_layout
+{
+    ULONG64  save_regs[4];
+    void            *func;
+    ULONG64         align;
+    CONTEXT       context;
+    ULONG64           rbp;
+    ULONG64           rip;
+};
+
+/* Should match size and offset in call_user_apc_dispatcher(). */
+C_ASSERT( offsetof(struct apc_stack_layout, context) == 0x30 );
+C_ASSERT( sizeof(struct apc_stack_layout) == 0x510 );
 
 struct syscall_frame
 {
@@ -269,6 +281,9 @@ struct syscall_frame
     ULONG64               thunk_addr;
     ULONG64               ret_addr;
 };
+
+/* Should match the offset in call_user_apc_dispatcher(). */
+C_ASSERT( offsetof( struct syscall_frame, ret_addr ) == 0xf0);
 
 struct amd64_thread_data
 {
@@ -291,6 +306,15 @@ static inline struct amd64_thread_data *amd64_thread_data(void)
     return (struct amd64_thread_data *)ntdll_get_thread_data()->cpu_data;
 }
 
+void *get_syscall_frame(void)
+{
+    return amd64_thread_data()->syscall_frame;
+}
+
+void set_syscall_frame(void *frame)
+{
+    amd64_thread_data()->syscall_frame = frame;
+}
 
 /***********************************************************************
  * Definitions for Dwarf unwind tables
@@ -488,10 +512,14 @@ enum dwarf_operation
 };
 
 #define DW_EH_PE_native   0x00
-#define DW_EH_PE_leb128   0x01
-#define DW_EH_PE_data2    0x02
-#define DW_EH_PE_data4    0x03
-#define DW_EH_PE_data8    0x04
+#define DW_EH_PE_uleb128  0x01
+#define DW_EH_PE_udata2   0x02
+#define DW_EH_PE_udata4   0x03
+#define DW_EH_PE_udata8   0x04
+#define DW_EH_PE_sleb128  0x09
+#define DW_EH_PE_sdata2   0x0a
+#define DW_EH_PE_sdata4   0x0b
+#define DW_EH_PE_sdata8   0x0c
 #define DW_EH_PE_signed   0x08
 #define DW_EH_PE_abs      0x00
 #define DW_EH_PE_pcrel    0x10
@@ -585,19 +613,31 @@ static LONG_PTR dwarf_get_sleb128( const unsigned char **p )
     return ret;
 }
 
-static ULONG_PTR dwarf_get_ptr( const unsigned char **p, unsigned char encoding )
+static ULONG_PTR dwarf_get_ptr( const unsigned char **p, unsigned char encoding, const struct dwarf_eh_bases *bases )
 {
     ULONG_PTR base;
 
     if (encoding == DW_EH_PE_omit) return 0;
 
-    switch (encoding & 0xf0)
+    switch (encoding & 0x70)
     {
     case DW_EH_PE_abs:
         base = 0;
         break;
     case DW_EH_PE_pcrel:
         base = (ULONG_PTR)*p;
+        break;
+    case DW_EH_PE_textrel:
+        base = (ULONG_PTR)bases->tbase;
+        break;
+    case DW_EH_PE_datarel:
+        base = (ULONG_PTR)bases->dbase;
+        break;
+    case DW_EH_PE_funcrel:
+        base = (ULONG_PTR)bases->func;
+        break;
+    case DW_EH_PE_aligned:
+        base = ((ULONG_PTR)*p + 7) & ~7ul;
         break;
     default:
         FIXME( "unsupported encoding %02x\n", encoding );
@@ -606,28 +646,21 @@ static ULONG_PTR dwarf_get_ptr( const unsigned char **p, unsigned char encoding 
 
     switch (encoding & 0x0f)
     {
-    case DW_EH_PE_native:
-        return base + dwarf_get_u8( p );
-    case DW_EH_PE_leb128:
-        return base + dwarf_get_uleb128( p );
-    case DW_EH_PE_data2:
-        return base + dwarf_get_u2( p );
-    case DW_EH_PE_data4:
-        return base + dwarf_get_u4( p );
-    case DW_EH_PE_data8:
-        return base + dwarf_get_u8( p );
-    case DW_EH_PE_signed|DW_EH_PE_leb128:
-        return base + dwarf_get_sleb128( p );
-    case DW_EH_PE_signed|DW_EH_PE_data2:
-        return base + (signed short)dwarf_get_u2( p );
-    case DW_EH_PE_signed|DW_EH_PE_data4:
-        return base + (signed int)dwarf_get_u4( p );
-    case DW_EH_PE_signed|DW_EH_PE_data8:
-        return base + (LONG64)dwarf_get_u8( p );
+    case DW_EH_PE_native:  base += dwarf_get_u8( p ); break;
+    case DW_EH_PE_uleb128: base += dwarf_get_uleb128( p ); break;
+    case DW_EH_PE_udata2:  base += dwarf_get_u2( p ); break;
+    case DW_EH_PE_udata4:  base += dwarf_get_u4( p ); break;
+    case DW_EH_PE_udata8:  base += dwarf_get_u8( p ); break;
+    case DW_EH_PE_sleb128: base += dwarf_get_sleb128( p ); break;
+    case DW_EH_PE_sdata2:  base += (signed short)dwarf_get_u2( p ); break;
+    case DW_EH_PE_sdata4:  base += (signed int)dwarf_get_u4( p ); break;
+    case DW_EH_PE_sdata8:  base += (LONG64)dwarf_get_u8( p ); break;
     default:
         FIXME( "unsupported encoding %02x\n", encoding );
         return 0;
     }
+    if (encoding & DW_EH_PE_indirect) base = *(ULONG_PTR *)base;
+    return base;
 }
 
 enum reg_rule
@@ -682,7 +715,8 @@ static BOOL valid_reg( ULONG_PTR reg )
 }
 
 static void execute_cfa_instructions( const unsigned char *ptr, const unsigned char *end,
-                                      ULONG_PTR last_ip, struct frame_info *info )
+                                      ULONG_PTR last_ip, struct frame_info *info,
+                                      const struct dwarf_eh_bases *bases )
 {
     while (ptr < end && info->ip < last_ip + info->signal_frame)
     {
@@ -725,7 +759,7 @@ static void execute_cfa_instructions( const unsigned char *ptr, const unsigned c
             break;
         case DW_CFA_set_loc:
         {
-            ULONG_PTR loc = dwarf_get_ptr( &ptr, info->fde_encoding );
+            ULONG_PTR loc = dwarf_get_ptr( &ptr, info->fde_encoding, bases );
             TRACE( "%lx: DW_CFA_set_loc %lx\n", info->ip, loc );
             info->ip = loc;
             break;
@@ -974,7 +1008,8 @@ static void set_context_reg( CONTEXT *context, ULONG_PTR dw_reg, void *val )
     }
 }
 
-static ULONG_PTR eval_expression( const unsigned char *p, CONTEXT *context )
+static ULONG_PTR eval_expression( const unsigned char *p, CONTEXT *context,
+                                  const struct dwarf_eh_bases *bases )
 {
     ULONG_PTR reg, tmp, stack[64];
     int sp = -1;
@@ -1035,7 +1070,7 @@ static ULONG_PTR eval_expression( const unsigned char *p, CONTEXT *context )
         case DW_OP_ne:          stack[sp-1] = (stack[sp-1] != stack[sp]); sp--; break;
         case DW_OP_skip:        tmp = (short)dwarf_get_u2(&p); p += tmp; break;
         case DW_OP_bra:         tmp = (short)dwarf_get_u2(&p); if (!stack[sp--]) p += tmp; break;
-        case DW_OP_GNU_encoded_addr: tmp = *p++; stack[++sp] = dwarf_get_ptr( &p, tmp ); break;
+        case DW_OP_GNU_encoded_addr: tmp = *p++; stack[++sp] = dwarf_get_ptr( &p, tmp, bases ); break;
         case DW_OP_regx:        stack[++sp] = *(ULONG_PTR *)get_context_reg( context, dwarf_get_uleb128(&p) ); break;
         case DW_OP_bregx:
             reg = dwarf_get_uleb128(&p);
@@ -1059,7 +1094,8 @@ static ULONG_PTR eval_expression( const unsigned char *p, CONTEXT *context )
 }
 
 /* apply the computed frame info to the actual context */
-static void apply_frame_state( CONTEXT *context, struct frame_state *state )
+static void apply_frame_state( CONTEXT *context, struct frame_state *state,
+                               const struct dwarf_eh_bases *bases )
 {
     unsigned int i;
     ULONG_PTR cfa, value;
@@ -1068,10 +1104,10 @@ static void apply_frame_state( CONTEXT *context, struct frame_state *state )
     switch (state->cfa_rule)
     {
     case RULE_EXPRESSION:
-        cfa = *(ULONG_PTR *)eval_expression( (const unsigned char *)state->cfa_offset, context );
+        cfa = *(ULONG_PTR *)eval_expression( (const unsigned char *)state->cfa_offset, context, bases );
         break;
     case RULE_VAL_EXPRESSION:
-        cfa = eval_expression( (const unsigned char *)state->cfa_offset, context );
+        cfa = eval_expression( (const unsigned char *)state->cfa_offset, context, bases );
         break;
     default:
         cfa = *(ULONG_PTR *)get_context_reg( context, state->cfa_reg ) + state->cfa_offset;
@@ -1094,11 +1130,11 @@ static void apply_frame_state( CONTEXT *context, struct frame_state *state )
             set_context_reg( &new_context, i, get_context_reg( context, state->regs[i] ));
             break;
         case RULE_EXPRESSION:
-            value = eval_expression( (const unsigned char *)state->regs[i], context );
+            value = eval_expression( (const unsigned char *)state->regs[i], context, bases );
             set_context_reg( &new_context, i, (void *)value );
             break;
         case RULE_VAL_EXPRESSION:
-            value = eval_expression( (const unsigned char *)state->regs[i], context );
+            value = eval_expression( (const unsigned char *)state->regs[i], context, bases );
             set_context_reg( &new_context, i, &value );
             break;
         }
@@ -1169,7 +1205,7 @@ static NTSTATUS dwarf_virtual_unwind( ULONG64 ip, ULONG64 *frame,CONTEXT *contex
         case 'P':
         {
             unsigned char encoding = *ptr++;
-            *handler = (void *)dwarf_get_ptr( &ptr, encoding );
+            *handler = (void *)dwarf_get_ptr( &ptr, encoding, bases );
             continue;
         }
         case 'R':
@@ -1186,11 +1222,11 @@ static NTSTATUS dwarf_virtual_unwind( ULONG64 ip, ULONG64 *frame,CONTEXT *contex
     if (end) ptr = end;
 
     end = (const unsigned char *)(&cie->length + 1) + cie->length;
-    execute_cfa_instructions( ptr, end, ip, &info );
+    execute_cfa_instructions( ptr, end, ip, &info, bases );
 
     ptr = (const unsigned char *)(fde + 1);
-    info.ip = dwarf_get_ptr( &ptr, info.fde_encoding );  /* fde code start */
-    code_end = info.ip + dwarf_get_ptr( &ptr, info.fde_encoding & 0x0f );  /* fde code length */
+    info.ip = dwarf_get_ptr( &ptr, info.fde_encoding, bases );  /* fde code start */
+    code_end = info.ip + dwarf_get_ptr( &ptr, info.fde_encoding & 0x0f, bases );  /* fde code length */
 
     if (aug_z_format)  /* get length of augmentation data */
     {
@@ -1199,15 +1235,15 @@ static NTSTATUS dwarf_virtual_unwind( ULONG64 ip, ULONG64 *frame,CONTEXT *contex
     }
     else end = NULL;
 
-    *handler_data = (void *)dwarf_get_ptr( &ptr, lsda_encoding );
+    *handler_data = (void *)dwarf_get_ptr( &ptr, lsda_encoding, bases );
     if (end) ptr = end;
 
     end = (const unsigned char *)(&fde->length + 1) + fde->length;
     TRACE( "fde %p len %x personality %p lsda %p code %lx-%lx\n",
            fde, fde->length, *handler, *handler_data, info.ip, code_end );
-    execute_cfa_instructions( ptr, end, ip, &info );
+    execute_cfa_instructions( ptr, end, ip, &info, bases );
     *frame = context->Rsp;
-    apply_frame_state( context, &info.state );
+    apply_frame_state( context, &info.state, bases );
 
     TRACE( "next function rip=%016lx\n", context->Rip );
     TRACE( "  rax=%016lx rbx=%016lx rcx=%016lx rdx=%016lx\n",
@@ -1466,7 +1502,7 @@ static void save_context( struct xcontext *xcontext, const ucontext_t *sigcontex
         context->ContextFlags |= CONTEXT_FLOATING_POINT;
         context->u.FltSave = *FPU_sig(sigcontext);
         context->MxCsr = context->u.FltSave.MxCsr;
-        if ((xs = XState_sig(FPU_sig(sigcontext))))
+        if (user_shared_data->XState.EnabledFeatures && (xs = XState_sig(FPU_sig(sigcontext))))
         {
             /* xcontext and sigcontext are both on the signal stack, so we can
              * just reference sigcontext without overflowing 32 bit XState.Offset */
@@ -1546,7 +1582,7 @@ static void restore_context( const struct xcontext *xcontext, ucontext_t *sigcon
     amd64_thread_data()->dr7 = context->Dr7;
     set_sigcontext( context, sigcontext );
     if (FPU_sig(sigcontext)) *FPU_sig(sigcontext) = context->u.FltSave;
-    if ((xs = XState_sig(FPU_sig(sigcontext))))
+    if (user_shared_data->XState.EnabledFeatures && (xs = XState_sig(FPU_sig(sigcontext))))
         xs->CompactionMask = xcontext->host_compaction_mask;
 }
 
@@ -1603,7 +1639,7 @@ static void restore_xstate( const CONTEXT *context )
     XSAVE_FORMAT *xrstor_base;
     XSTATE *xs;
 
-    if (!(xs = xstate_from_context( context )))
+    if (!(user_shared_data->XState.EnabledFeatures && (xs = xstate_from_context( context ))))
         return;
 
     xrstor_base = (XSAVE_FORMAT *)xs - 1;
@@ -1964,10 +2000,10 @@ static void setup_raise_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec
     /* fix up instruction pointer in context for EXCEPTION_BREAKPOINT */
     if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context->Rip--;
 
-    stack_size = sizeof(*stack);
+    stack_size = sizeof(*stack) + 0x20;
     if ((src_xs = xstate_from_context( context )))
     {
-        stack_size += (ULONG_PTR)stack_ptr - (((ULONG_PTR)stack_ptr
+        stack_size += (ULONG_PTR)stack_ptr - 0x20 - (((ULONG_PTR)stack_ptr - 0x20
                 - sizeof(XSTATE)) & ~(ULONG_PTR)63);
     }
 
@@ -2017,35 +2053,69 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 /***********************************************************************
  *           call_user_apc_dispatcher
  */
+struct apc_stack_layout * WINAPI setup_user_apc_dispatcher_stack( CONTEXT *context, struct apc_stack_layout *stack )
+{
+    CONTEXT c;
+
+    if (!context)
+    {
+        c.ContextFlags = CONTEXT_FULL;
+        NtGetContextThread( GetCurrentThread(), &c );
+        c.Rax = STATUS_USER_APC;
+        context = &c;
+    }
+    memmove( &stack->context, context, sizeof(stack->context) );
+    return stack;
+}
+
 __ASM_GLOBAL_FUNC( call_user_apc_dispatcher,
                    "movq 0x28(%rsp),%rsi\n\t"       /* func */
                    "movq 0x30(%rsp),%rdi\n\t"       /* dispatcher */
                    "movq %gs:0x30,%rbx\n\t"
-                   "jrcxz 1f\n\t"
-                   "movq 0x98(%rcx),%rax\n\t"       /* context_ptr->Rsp */
-                   "leaq -0x5c0(%rax),%rsp\n\t"     /* sizeof(CONTEXT) + offsetof(frame,ret_addr) */
-                   "andq $~15,%rsp\n\t"
-                   "jmp 2f\n"
-                   "1:\tmovq 0x328(%rbx),%rax\n\t"  /* amd64_thread_data()->syscall_frame */
-                   "leaq -0x4d0(%rax),%rsp\n\t"
-                   "andq $~15,%rsp\n\t"
                    "movq %rdx,%r12\n\t"             /* ctx */
                    "movq %r8,%r13\n\t"              /* arg1 */
                    "movq %r9,%r14\n\t"              /* arg2 */
-                   "movq %rsp,%rdx\n\t"             /* context */
-                   "movl $0x10000b,0x30(%rdx)\n\t"  /* context.ContextFlags */
-                   "movq $~1,%rcx\n\t"
-                   "call " __ASM_NAME("NtGetContextThread") "\n\t"
-                   "movq %rsp,%rcx\n\t"             /* context */
-                   "movq $0xc0,0x78(%rcx)\n\t"      /* context.Rax = STATUS_USER_APC */
+                   "jrcxz 1f\n\t"
+                   "movq 0x98(%rcx),%rdx\n\t"        /* context->Rsp */
+                   "jmp 2f\n\t"
+                   "1:\tmovq 0x328(%rbx),%rax\n\t"   /* amd64_thread_data()->syscall_frame */
+                   "leaq 0xf0(%rax),%rdx\n\t"        /* &amd64_thread_data()->syscall_frame->ret_addr */
+                   "2:\tsubq $0x510,%rdx\n\t"        /* sizeof(struct apc_stack_layout) */
+                   "andq $~0xf,%rdx\n\t"
+                   "addq $8,%rsp\n\t"                /* pop return address */
+                   "cmpq %rsp,%rdx\n\t"
+                   "cmovbq %rdx,%rsp\n\t"
+                   "subq $0x20,%rsp\n\t"
+                   "call " __ASM_NAME("setup_user_apc_dispatcher_stack") "\n\t"
+                   "movq %rax,%rsp\n\t"
+                   "leaq 0x30(%rsp),%rcx\n\t"       /* context */
                    "movq %r12,%rdx\n\t"             /* ctx */
                    "movq %r13,%r8\n\t"              /* arg1 */
                    "movq %r14,%r9\n"                /* arg2 */
-                   "2:\tmovq $0,0x328(%rbx)\n\t"
+                   "movq $0,0x328(%rbx)\n\t"        /* amd64_thread_data()->syscall_frame */
                    "movq %rsi,0x20(%rsp)\n\t"       /* func */
-                   "movq 0xa0(%rcx),%rbp\n\t"       /* context.Rbp */
+                   "movq %rdi,%r10\n\t"
+                   /* Set nonvolatile regs from context. */
+                   "movq 0xa0(%rcx),%rbp\n\t"
+                   "movq 0x90(%rcx),%rbx\n\t"
+                   "movq 0xa8(%rcx),%rsi\n\t"
+                   "movq 0xb0(%rcx),%rdi\n\t"
+                   "movq 0xd8(%rcx),%r12\n\t"
+                   "movq 0xe0(%rcx),%r13\n\t"
+                   "movq 0xe8(%rcx),%r14\n\t"
+                   "movq 0xf0(%rcx),%r15\n\t"
+                   "movdqa 0x200(%rcx),%xmm6\n\t"
+                   "movdqa 0x210(%rcx),%xmm7\n\t"
+                   "movdqa 0x220(%rcx),%xmm8\n\t"
+                   "movdqa 0x230(%rcx),%xmm9\n\t"
+                   "movdqa 0x240(%rcx),%xmm10\n\t"
+                   "movdqa 0x250(%rcx),%xmm11\n\t"
+                   "movdqa 0x260(%rcx),%xmm12\n\t"
+                   "movdqa 0x270(%rcx),%xmm13\n\t"
+                   "movdqa 0x280(%rcx),%xmm14\n\t"
+                   "movdqa 0x290(%rcx),%xmm15\n\t"
                    "pushq 0xf8(%rcx)\n\t"           /* context.Rip */
-                   "jmp *%rdi" )
+                   "jmp *%r10" )
 
 
 /***********************************************************************
@@ -2081,19 +2151,7 @@ __ASM_GLOBAL_FUNC( call_raise_user_exception_dispatcher,
 /***********************************************************************
  *           call_user_exception_dispatcher
  */
-
-extern void WINAPI user_exception_dispatcher_trampoline( struct stack_layout *stack,
-        void *pKiUserExceptionDispatcher );
-
-__ASM_GLOBAL_FUNC( user_exception_dispatcher_trampoline,
-                   "movq %rcx,%rsp\n\t"
-                   "movq 0x98(%rsp),%rcx\n\t" /* context->Rsp */
-                   "movq 0xa0(%rsp),%rbp\n\t"
-                   "movq 0xa8(%rsp),%rsi\n\t"
-                   "movq 0xb0(%rsp),%rdi\n\t"
-                   "jmpq *%rdx")
-
-void WINAPI do_call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context,
+struct stack_layout * WINAPI setup_user_exception_dispatcher_stack( EXCEPTION_RECORD *rec, CONTEXT *context,
                                                NTSTATUS (WINAPI *dispatcher)(EXCEPTION_RECORD*,CONTEXT*),
                                                struct stack_layout *stack )
 {
@@ -2127,21 +2185,48 @@ void WINAPI do_call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *c
     /* fix up instruction pointer in context for EXCEPTION_BREAKPOINT */
     if (stack->rec.ExceptionCode == EXCEPTION_BREAKPOINT) stack->context.Rip--;
 
-    amd64_thread_data()->syscall_frame = NULL;
-    user_exception_dispatcher_trampoline( stack, dispatcher );
+    return stack;
 }
 
 __ASM_GLOBAL_FUNC( call_user_exception_dispatcher,
                    "movq 0x98(%rdx),%r9\n\t" /* context->Rsp */
+                   "subq $0x20,%r9\n\t" /* Unwind registers save space */
                    "andq $~0xf,%r9\n\t"
                    "btl $6,0x30(%rdx)\n\t" /* context->ContextFlags, CONTEXT_XSTATE bit. */
                    "jnc 1f\n\t"
                    "subq $0x140,%r9\n\t" /* sizeof(XSTATE) */
                    "andq $~63,%r9\n"
-                   "1:\tsubq $0x5b0,%r9\n\t" /* sizeof(struct stack_layout) */
+                   "1:\tsubq $0x590,%r9\n\t" /* sizeof(struct stack_layout) */
                    "cmpq %rsp,%r9\n\t"
                    "cmovbq %r9,%rsp\n\t"
-                   "jmp " __ASM_NAME("do_call_user_exception_dispatcher") "\n\t")
+                   "pushq %r8\n\t"
+                   "subq $0x20,%rsp\n\t"
+                   "call " __ASM_NAME("setup_user_exception_dispatcher_stack") "\n\t"
+                   "addq $0x20,%rsp\n\t"
+                   "popq %r8\n\t"
+                   "mov %rax,%rcx\n\t"
+                   "movq 0xa0(%rcx),%rbp\n\t"
+                   "movq 0x90(%rcx),%rbx\n\t"
+                   "movq 0xa8(%rcx),%rsi\n\t"
+                   "movq 0xb0(%rcx),%rdi\n\t"
+                   "movq 0xd8(%rcx),%r12\n\t"
+                   "movq 0xe0(%rcx),%r13\n\t"
+                   "movq 0xe8(%rcx),%r14\n\t"
+                   "movq 0xf0(%rcx),%r15\n\t"
+                   "movdqa 0x200(%rcx),%xmm6\n\t"
+                   "movdqa 0x210(%rcx),%xmm7\n\t"
+                   "movdqa 0x220(%rcx),%xmm8\n\t"
+                   "movdqa 0x230(%rcx),%xmm9\n\t"
+                   "movdqa 0x240(%rcx),%xmm10\n\t"
+                   "movdqa 0x250(%rcx),%xmm11\n\t"
+                   "movdqa 0x260(%rcx),%xmm12\n\t"
+                   "movdqa 0x270(%rcx),%xmm13\n\t"
+                   "movdqa 0x280(%rcx),%xmm14\n\t"
+                   "movdqa 0x290(%rcx),%xmm15\n\t"
+                   "mov %rcx,%rsp\n\t"
+                   "movq %gs:0x30,%rax\n\t"
+                   "movq $0,0x328(%rax)\n\t"   /* amd64_thread_data()->syscall_frame */
+                   "jmpq *%r8")
 
 /***********************************************************************
  *           is_privileged_instr

@@ -686,9 +686,14 @@ void output_standard_file_header(void)
     output( "/* This file can be copied, modified and distributed without restriction. */\n\n" );
     if (safe_seh)
     {
-        output( "\t.def    @feat.00; .scl 3; .type 0; .endef\n" );
+        output( "\t.def    @feat.00\n\t.scl 3\n\t.type 0\n\t.endef\n" );
         output( "\t.globl  @feat.00\n" );
         output( ".set @feat.00, 1\n" );
+    }
+    if (thumb_mode)
+    {
+        output( "\t.syntax unified\n" );
+        output( "\t.thumb\n" );
     }
 }
 
@@ -1119,13 +1124,17 @@ const char *func_declaration( const char *func )
         return "";
     case PLATFORM_WINDOWS:
         free( buffer );
-        buffer = strmake( ".def %s; .scl 2; .type 32; .endef", asm_name(func) );
+        buffer = strmake( ".def %s\n\t.scl 2\n\t.type 32\n\t.endef%s", asm_name(func),
+                          thumb_mode ? "\n\t.thumb_func" : "" );
         break;
     default:
         free( buffer );
         switch(target_cpu)
         {
         case CPU_ARM:
+            buffer = strmake( ".type %s,%%function%s", func,
+                              thumb_mode ? "\n\t.thumb_func" : "" );
+            break;
         case CPU_ARM64:
             buffer = strmake( ".type %s,%%function", func );
             break;

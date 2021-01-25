@@ -2551,29 +2551,35 @@ static void test_WSASocket(void)
            SOCK_RAW, socktype);
         closesocket(sock);
 
-        todo_wine {
         sock = WSASocketA(0, 0, IPPROTO_RAW, NULL, 0, 0);
-        ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
-           WSAGetLastError());
-        size = sizeof(socktype);
-        socktype = 0xdead;
-        err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
-        ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
-        ok(socktype == SOCK_RAW, "Wrong socket type, expected %d received %d\n",
-           SOCK_RAW, socktype);
-        closesocket(sock);
-        }
+        if (sock != INVALID_SOCKET)
+        {
+            todo_wine {
+            size = sizeof(socktype);
+            socktype = 0xdead;
+            err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+            ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
+            ok(socktype == SOCK_RAW, "Wrong socket type, expected %d received %d\n",
+               SOCK_RAW, socktype);
+            closesocket(sock);
+            }
 
-        sock = WSASocketA(AF_INET, SOCK_RAW, IPPROTO_TCP, NULL, 0, 0);
-        ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
-           WSAGetLastError());
-        size = sizeof(socktype);
-        socktype = 0xdead;
-        err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
-        ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
-        ok(socktype == SOCK_RAW, "Wrong socket type, expected %d received %d\n",
-           SOCK_RAW, socktype);
-        closesocket(sock);
+            sock = WSASocketA(AF_INET, SOCK_RAW, IPPROTO_TCP, NULL, 0, 0);
+            ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
+               WSAGetLastError());
+            size = sizeof(socktype);
+            socktype = 0xdead;
+            err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+            ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
+            ok(socktype == SOCK_RAW, "Wrong socket type, expected %d received %d\n",
+               SOCK_RAW, socktype);
+            closesocket(sock);
+        }
+        else if (WSAGetLastError() == WSAEACCES)
+            skip("SOCK_RAW is not available\n");
+        else
+            ok(0, "Failed to create socket: %d\n", WSAGetLastError());
+
     }
 
     /* IPX socket tests */
@@ -2917,10 +2923,28 @@ static void test_WSAAddressToString(void)
     sockaddr.sin_family = AF_INET;
     sockaddr.sin_addr.s_addr = 0;
     sockaddr.sin_port = 0;
+    WSASetLastError( 0xdeadbeef );
     ret = WSAAddressToStringA( (SOCKADDR*)&sockaddr, sizeof(sockaddr), NULL, output, &len );
     ok( ret == SOCKET_ERROR, "WSAAddressToStringA() returned %d, expected SOCKET_ERROR\n", ret );
     ok( WSAGetLastError() == WSAEFAULT, "WSAAddressToStringA() gave error %d, expected WSAEFAULT\n", WSAGetLastError() );
     ok( len == 8, "WSAAddressToStringA() gave length %d, expected 8\n", len );
+
+    len = 0;
+    sockaddr.sin_family = AF_INET;
+    sockaddr.sin_addr.s_addr = 0;
+    sockaddr.sin_port = 0;
+    WSASetLastError( 0xdeadbeef );
+    ret = WSAAddressToStringW( (SOCKADDR*)&sockaddr, sizeof(sockaddr), NULL, NULL, &len );
+    ok( ret == SOCKET_ERROR, "got %d\n", ret );
+    ok( WSAGetLastError() == WSAEFAULT, "got %08x\n", WSAGetLastError() );
+    ok( len == 8, "got %u\n", len );
+
+    len = ARRAY_SIZE(outputW);
+    memset( outputW, 0, sizeof(outputW) );
+    ret = WSAAddressToStringW( (SOCKADDR*)&sockaddr, sizeof(sockaddr), NULL, outputW, &len );
+    ok( !ret, "WSAAddressToStringW() returned %d\n", ret );
+    ok( len == 8, "got %u\n", len );
+    ok( !wcscmp(outputW, L"0.0.0.0"), "got %s\n", wine_dbgstr_w(outputW) );
 
     for (i = 0; i < 2; i++)
     {
@@ -10508,6 +10532,61 @@ static void test_WSCGetProviderPath(void)
     ok(len == 256, "Got unexpected len %d.\n", len);
 }
 
+static void test_wsaioctl(void)
+{
+    unsigned int i, count;
+    INTERFACE_INFO *info;
+    BOOL loopback_found;
+    char buffer[4096];
+    DWORD size;
+    SOCKET s;
+    int ret;
+
+    s = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+    ok(s != INVALID_SOCKET, "failed to create socket, error %u\n", WSAGetLastError());
+
+    size = 0xdeadbeef;
+    ret = WSAIoctl(s, SIO_GET_INTERFACE_LIST, NULL, 0, buffer, sizeof(buffer), &size, NULL, NULL);
+    ok(!ret, "Got unexpected ret %d.\n", ret);
+    ok(size && size != 0xdeadbeef && !(size % sizeof(INTERFACE_INFO)), "Got unexpected size %u.\n", size);
+
+    info = (INTERFACE_INFO *)buffer;
+    count = size / sizeof(INTERFACE_INFO);
+    loopback_found = FALSE;
+    for (i = 0; i < count; ++i)
+    {
+        if (info[i].iiFlags & IFF_LOOPBACK)
+            loopback_found = TRUE;
+
+        ok(info[i].iiAddress.AddressIn.sin_family == AF_INET, "Got unexpected sin_family %#x.\n",
+                info[i].iiAddress.AddressIn.sin_family);
+        ok(info[i].iiNetmask.AddressIn.sin_family == AF_INET, "Got unexpected sin_family %#x.\n",
+                info[i].iiNetmask.AddressIn.sin_family);
+        ok(info[i].iiBroadcastAddress.AddressIn.sin_family
+                == (info[i].iiFlags & IFF_BROADCAST) ? AF_INET : 0, "Got unexpected sin_family %#x.\n",
+                info[i].iiBroadcastAddress.AddressIn.sin_family);
+        ok(info[i].iiAddress.AddressIn.sin_addr.S_un.S_addr, "Got zero iiAddress.\n");
+        ok(info[i].iiNetmask.AddressIn.sin_addr.S_un.S_addr, "Got zero iiNetmask.\n");
+        ok((info[i].iiFlags & IFF_BROADCAST) ? info[i].iiBroadcastAddress.AddressIn.sin_addr.S_un.S_addr
+                : !info[i].iiBroadcastAddress.AddressIn.sin_addr.S_un.S_addr,
+                "Got unexpected iiBroadcastAddress %s.\n", inet_ntoa(info[i].iiBroadcastAddress.AddressIn.sin_addr));
+    }
+
+    ok(loopback_found, "Loopback interface not found.\n");
+
+    size = 0xdeadbeef;
+    ret = WSAIoctl(s, SIO_GET_INTERFACE_LIST, NULL, 0, buffer, sizeof(INTERFACE_INFO) - 1, &size, NULL, NULL);
+    ok(ret == -1, "Got unexpected ret %d.\n", ret);
+    ok(WSAGetLastError() == WSAEFAULT, "Got unexpected error %d.\n", WSAGetLastError());
+    ok(!size, "Got unexpected size %u.\n", size);
+
+    ret = WSAIoctl(s, SIO_GET_INTERFACE_LIST, NULL, 0, buffer, sizeof(buffer), NULL, NULL, NULL);
+    ok(ret == -1, "Got unexpected ret %d.\n", ret);
+    ok(WSAGetLastError() == WSAEFAULT, "Got unexpected error %d.\n", WSAGetLastError());
+
+    closesocket(s);
+}
+
 START_TEST( sock )
 {
     int i;
@@ -10589,6 +10668,7 @@ START_TEST( sock )
     /* this is an io heavy test, do it at the end so the kernel doesn't start dropping packets */
     test_send();
     test_synchronous_WSAIoctl();
+    test_wsaioctl();
 
     Exit();
 }

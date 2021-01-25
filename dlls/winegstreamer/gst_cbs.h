@@ -30,7 +30,6 @@ typedef enum {
 } GstAutoplugSelectResult;
 
 enum CB_TYPE {
-    WATCH_BUS,
     EXISTING_NEW_PAD,
     QUERY_FUNCTION,
     ACTIVATE_MODE,
@@ -40,8 +39,6 @@ enum CB_TYPE {
     EVENT_SINK,
     GOT_DATA_SINK,
     REMOVED_DECODED_PAD,
-    AUTOPLUG_BLACKLIST,
-    UNKNOWN_TYPE,
     QUERY_SINK,
     GSTDEMUX_MAX,
     BYTESTREAM_WRAPPER_PULL,
@@ -117,20 +114,6 @@ struct cb_data {
             GstPad *pad;
             gpointer user;
         } pad_removed_data;
-        struct autoplug_blacklist_data {
-            GstElement *bin;
-            GstPad *pad;
-            GstCaps *caps;
-            GstElementFactory *fact;
-            gpointer user;
-            GstAutoplugSelectResult ret;
-        } autoplug_blacklist_data;
-        struct unknown_type_data {
-            GstElement *bin;
-            GstPad *pad;
-            GstCaps *caps;
-            gpointer user;
-        } unknown_type_data;
         struct query_sink_data {
             GstPad *pad;
             GstObject *parent;
@@ -149,7 +132,6 @@ void mark_wine_thread(void) DECLSPEC_HIDDEN;
 void perform_cb_gstdemux(struct cb_data *data) DECLSPEC_HIDDEN;
 void perform_cb_media_source(struct cb_data *data) DECLSPEC_HIDDEN;
 
-GstBusSyncReply watch_bus_wrapper(GstBus *bus, GstMessage *msg, gpointer user) DECLSPEC_HIDDEN;
 void existing_new_pad_wrapper(GstElement *bin, GstPad *pad, gpointer user) DECLSPEC_HIDDEN;
 gboolean query_function_wrapper(GstPad *pad, GstObject *parent, GstQuery *query) DECLSPEC_HIDDEN;
 gboolean activate_mode_wrapper(GstPad *pad, GstObject *parent, GstPadMode mode, gboolean activate) DECLSPEC_HIDDEN;
@@ -160,8 +142,6 @@ gboolean event_sink_wrapper(GstPad *pad, GstObject *parent, GstEvent *event) DEC
 GstFlowReturn got_data_sink_wrapper(GstPad *pad, GstObject *parent, GstBuffer *buf) DECLSPEC_HIDDEN;
 GstFlowReturn got_data_wrapper(GstPad *pad, GstObject *parent, GstBuffer *buf) DECLSPEC_HIDDEN;
 void removed_decoded_pad_wrapper(GstElement *bin, GstPad *pad, gpointer user) DECLSPEC_HIDDEN;
-GstAutoplugSelectResult autoplug_blacklist_wrapper(GstElement *bin, GstPad *pad, GstCaps *caps, GstElementFactory *fact, gpointer user) DECLSPEC_HIDDEN;
-void unknown_type_wrapper(GstElement *bin, GstPad *pad, GstCaps *caps, gpointer user) DECLSPEC_HIDDEN;
 void Gstreamer_transform_pad_added_wrapper(GstElement *filter, GstPad *pad, gpointer user) DECLSPEC_HIDDEN;
 gboolean query_sink_wrapper(GstPad *pad, GstObject *parent, GstQuery *query) DECLSPEC_HIDDEN;
 GstFlowReturn bytestream_wrapper_pull_wrapper(GstPad *pad, GstObject *parent, guint64 ofs, guint len, GstBuffer **buf) DECLSPEC_HIDDEN;

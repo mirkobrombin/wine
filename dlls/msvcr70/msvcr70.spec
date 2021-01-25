@@ -181,7 +181,7 @@
 @ cdecl __p__osver()
 @ cdecl __p__pctype()
 @ cdecl __p__pgmptr()
-@ stub __p__pwctype()
+@ cdecl __p__pwctype()
 @ cdecl __p__timezone()
 @ cdecl __p__tzname()
 @ cdecl __p__wcmdln()
@@ -192,7 +192,7 @@
 @ cdecl __p__wpgmptr()
 @ cdecl __pctype_func()
 @ extern __pioinfo MSVCRT___pioinfo
-@ stub __pwctype_func
+@ cdecl __pwctype_func()
 @ cdecl __pxcptinfoptrs()
 @ cdecl __security_error_handler(long ptr)
 @ cdecl __set_app_type(long)
@@ -209,7 +209,7 @@
 @ cdecl __wcserror(wstr)
 @ cdecl __wgetmainargs(ptr ptr ptr long ptr)
 @ extern __winitenv MSVCRT___winitenv
-@ cdecl _abnormal_termination()
+@ cdecl _abnormal_termination() __intrinsic_abnormal_termination
 @ cdecl _access(str long)
 @ extern _acmdln MSVCRT__acmdln
 @ stdcall -arch=i386 _adj_fdiv_m16i(long)
@@ -342,7 +342,7 @@
 @ cdecl _getdrives() kernel32.GetLogicalDrives
 @ cdecl _getmaxstdio()
 @ cdecl _getmbcp()
-@ cdecl _getpid() _getpid
+@ cdecl _getpid()
 @ stub _getsystime(ptr)
 @ cdecl _getw(ptr)
 @ cdecl _getwch()
@@ -410,8 +410,8 @@
 @ cdecl _locking(long long long)
 @ cdecl _logb(double)
 @ cdecl -arch=i386 _longjmpex(ptr long) MSVCRT_longjmp
-@ cdecl _lrotl(long long)
-@ cdecl _lrotr(long long)
+@ cdecl _lrotl(long long) MSVCRT__lrotl
+@ cdecl _lrotr(long long) MSVCRT__lrotr
 @ cdecl _lsearch(ptr ptr ptr long ptr)
 @ cdecl _lseek(long long long)
 @ cdecl -ret64 _lseeki64(long int64 long)
@@ -421,7 +421,7 @@
 @ cdecl _mbbtombc(long)
 @ cdecl _mbbtype(long long)
 # extern _mbcasemap
-@ cdecl _mbccpy(ptr str)
+@ cdecl _mbccpy(ptr ptr)
 @ cdecl _mbcjistojms(long)
 @ cdecl _mbcjmstojis(long)
 @ cdecl _mbclen(ptr)
@@ -504,8 +504,8 @@
 @ cdecl _resetstkoflw()
 @ cdecl _rmdir(str)
 @ cdecl _rmtmp()
-@ cdecl _rotl(long long)
-@ cdecl _rotr(long long)
+@ cdecl _rotl(long long) MSVCRT__rotl
+@ cdecl _rotr(long long) MSVCRT__rotr
 @ cdecl -arch=i386 _safe_fdiv()
 @ cdecl -arch=i386 _safe_fdivr()
 @ cdecl -arch=i386 _safe_fprem()

@@ -92,7 +92,7 @@
 @ cdecl __fpe_flt_rounds()
 @ cdecl __fpecode()
 @ cdecl __initialize_lconv_for_unsigned_char() __lconv_init
-@ stub __intrinsic_abnormal_termination
+@ cdecl __intrinsic_abnormal_termination()
 @ cdecl -arch=i386,x86_64,arm,arm64 -norelay __intrinsic_setjmp(ptr) MSVCRT__setjmp
 @ cdecl -arch=x86_64,arm64 -norelay __intrinsic_setjmpex(ptr ptr) __wine_setjmpex
 @ cdecl __isascii(long)
@@ -136,7 +136,7 @@
 @ cdecl __p__wpgmptr()
 @ cdecl __pctype_func()
 @ cdecl __processing_throw()
-@ stub __pwctype_func
+@ cdecl __pwctype_func()
 @ cdecl __pxcptinfoptrs()
 @ stub __report_gsfailure
 @ cdecl __setusermatherr(ptr)
@@ -394,7 +394,7 @@
 @ cdecl _getdrives() kernel32.GetLogicalDrives
 @ cdecl _getmaxstdio()
 @ cdecl _getmbcp()
-@ cdecl _getpid() _getpid
+@ cdecl _getpid()
 @ stub _getsystime(ptr)
 @ cdecl _getw(ptr)
 @ cdecl _getwc_nolock(ptr) _fgetwc_nolock
@@ -484,7 +484,7 @@
 @ cdecl _ismbcl2_l(long ptr)
 @ cdecl _ismbclegal(long)
 @ cdecl _ismbclegal_l(long ptr)
-@ stub _ismbclower(long)
+@ cdecl _ismbclower(long)
 @ cdecl _ismbclower_l(long ptr)
 @ cdecl _ismbcprint(long)
 @ cdecl _ismbcprint_l(long ptr)
@@ -568,8 +568,8 @@
 @ cdecl _logb(double)
 @ cdecl -arch=!i386 _logbf(float)
 @ cdecl -arch=i386 _longjmpex(ptr long) MSVCRT_longjmp
-@ cdecl _lrotl(long long)
-@ cdecl _lrotr(long long)
+@ cdecl _lrotl(long long) MSVCRT__lrotl
+@ cdecl _lrotr(long long) MSVCRT__lrotr
 @ cdecl _lsearch(ptr ptr ptr long ptr)
 @ stub _lsearch_s
 @ cdecl _lseek(long long long)
@@ -623,7 +623,7 @@
 @ cdecl _mbscspn_l(str str ptr)
 @ cdecl _mbsdec(ptr ptr)
 @ stub _mbsdec_l
-@ stub _mbsdup(str)
+@ cdecl _mbsdup(str) _strdup
 @ cdecl _mbsicmp(str str)
 @ stub _mbsicmp_l
 @ cdecl _mbsicoll(str str)
@@ -1866,10 +1866,10 @@
 @ cdecl _resetstkoflw()
 @ cdecl _rmdir(str)
 @ cdecl _rmtmp()
-@ cdecl _rotl(long long)
-@ cdecl -ret64 _rotl64(int64 long)
-@ cdecl _rotr(long long)
-@ cdecl -ret64 _rotr64(int64 long)
+@ cdecl _rotl(long long) MSVCRT__rotl
+@ cdecl -ret64 _rotl64(int64 long) MSVCRT__rotl64
+@ cdecl _rotr(long long) MSVCRT__rotr
+@ cdecl -ret64 _rotr64(int64 long) MSVCRT__rotr64
 @ cdecl _scalb(double long)
 @ cdecl -arch=x86_64 _scalbf(float long)
 @ cdecl _searchenv(str str ptr)
@@ -2425,7 +2425,7 @@
 @ cdecl memcpy(ptr ptr long)
 @ cdecl memcpy_s(ptr long ptr long)
 @ cdecl memmove(ptr ptr long)
-@ cdecl memmove_s(ptr long ptr long) memmove_s
+@ cdecl memmove_s(ptr long ptr long)
 @ cdecl memset(ptr long long)
 @ cdecl modf(double ptr)
 @ cdecl -arch=!i386 modff(float ptr)

@@ -189,7 +189,7 @@
 @ stub NtCreateToken
 @ stdcall -syscall NtCreateUserProcess(ptr ptr long long ptr ptr long long ptr ptr ptr)
 # @ stub NtCreateWaitablePort
-@ stdcall -arch=win32,arm64 NtCurrentTeb()
+@ stdcall -arch=i386,arm64 NtCurrentTeb()
 @ stdcall -syscall NtDebugActiveProcess(long long)
 # @ stub NtDebugContinue
 @ stdcall -syscall NtDelayExecution(long ptr)
@@ -572,7 +572,7 @@
 @ stdcall RtlDecodeSystemPointer(ptr) RtlDecodePointer
 @ stdcall RtlDecompressBuffer(long ptr long ptr long ptr)
 @ stdcall RtlDecompressFragment(long ptr long ptr long long ptr ptr)
-@ stub RtlDefaultNpAcl
+@ stdcall RtlDefaultNpAcl(ptr)
 @ stub RtlDelete
 @ stdcall RtlDeleteAce(ptr long)
 @ stdcall RtlDeleteAtomFromAtomTable(ptr long)
@@ -1445,7 +1445,7 @@
 @ cdecl -private -arch=i386 _CIsin()
 @ cdecl -private -arch=i386 _CIsqrt()
 @ stdcall -arch=x86_64,arm64 __C_specific_handler(ptr long ptr ptr)
-@ cdecl -arch=arm,x86_64 -norelay __chkstk()
+@ cdecl -arch=arm,arm64,x86_64 -norelay __chkstk()
 @ cdecl __isascii(long)
 @ cdecl __iscsym(long)
 @ cdecl __iscsymf(long)

@@ -265,7 +265,7 @@
 @ cdecl -arch=i386 __p__osver()
 @ cdecl -arch=i386 __p__pctype()
 @ cdecl -arch=i386 __p__pgmptr()
-@ stub -arch=i386 __p__pwctype()
+@ cdecl -arch=i386 __p__pwctype()
 @ cdecl -arch=i386 __p__timezone()
 @ cdecl -arch=i386 __p__tzname()
 @ cdecl -arch=i386 __p__wcmdln()
@@ -276,7 +276,7 @@
 @ cdecl -arch=i386 __p__wpgmptr()
 @ cdecl __pctype_func()
 @ extern __pioinfo MSVCRT___pioinfo
-# stub __pwctype_func()
+@ cdecl __pwctype_func()
 @ cdecl __pxcptinfoptrs()
 @ cdecl __set_app_type(long)
 @ extern __setlc_active MSVCRT___setlc_active
@@ -295,7 +295,7 @@
 # stub __wcsncnt(wstr long)
 @ cdecl __wgetmainargs(ptr ptr ptr long ptr)
 @ extern __winitenv MSVCRT___winitenv
-@ cdecl _abnormal_termination()
+@ cdecl _abnormal_termination() __intrinsic_abnormal_termination
 @ cdecl -ret64 _abs64(int64)
 @ cdecl _access(str long)
 @ cdecl _access_s(str long)
@@ -500,7 +500,7 @@
 @ varargs _fwscanf_l(ptr wstr ptr)
 @ varargs _fwscanf_s_l(ptr wstr ptr)
 @ cdecl _gcvt(double long str)
-@ cdecl _gcvt_s(ptr long  double long)
+@ cdecl _gcvt_s(ptr long double long)
 @ cdecl _get_current_locale()
 @ cdecl _get_doserrno(ptr)
 @ cdecl _get_environ(ptr)
@@ -532,7 +532,7 @@
 @ cdecl _getdrives() kernel32.GetLogicalDrives
 @ cdecl _getmaxstdio()
 @ cdecl _getmbcp()
-@ cdecl _getpid() _getpid
+@ cdecl _getpid()
 @ stub _getsystime(ptr)
 @ cdecl _getw(ptr)
 @ cdecl _getwch()
@@ -672,8 +672,8 @@
 @ cdecl _logb(double)
 @ cdecl -arch=!i386 _logbf(float)
 @ cdecl -arch=i386 _longjmpex(ptr long) MSVCRT_longjmp
-@ cdecl _lrotl(long long)
-@ cdecl _lrotr(long long)
+@ cdecl _lrotl(long long) MSVCRT__lrotl
+@ cdecl _lrotr(long long) MSVCRT__lrotr
 @ cdecl _lsearch(ptr ptr ptr long ptr)
 # stub _lsearch_s(ptr ptr ptr long ptr ptr)
 @ cdecl _lseek(long long long)
@@ -871,10 +871,10 @@
 @ cdecl _resetstkoflw()
 @ cdecl _rmdir(str)
 @ cdecl _rmtmp()
-@ cdecl _rotl(long long)
-@ cdecl -ret64 _rotl64(int64 long)
-@ cdecl _rotr(long long)
-@ cdecl -ret64 _rotr64(int64 long)
+@ cdecl _rotl(long long) MSVCRT__rotl
+@ cdecl -ret64 _rotl64(int64 long) MSVCRT__rotl64
+@ cdecl _rotr(long long) MSVCRT__rotr
+@ cdecl -ret64 _rotr64(int64 long) MSVCRT__rotr64
 @ cdecl -arch=i386 _safe_fdiv()
 @ cdecl -arch=i386 _safe_fdivr()
 @ cdecl -arch=i386 _safe_fprem()
@@ -1284,7 +1284,7 @@
 @ cdecl exp(double)
 @ cdecl -arch=!i386 expf(float)
 @ cdecl fabs(double)
-@ cdecl -arch=!i386 fabsf(float)
+@ cdecl -arch=arm,arm64 fabsf(float)
 @ cdecl fclose(ptr)
 @ cdecl feof(ptr)
 @ cdecl ferror(ptr)

@@ -32,6 +32,7 @@ AC_ARG_ENABLE(win16, AS_HELP_STRING([--disable-win16],[do not include Win16 supp
 AC_ARG_ENABLE(win64, AS_HELP_STRING([--enable-win64],[build a Win64 emulator on AMD64 (won't run Win32 binaries)]))
 AC_ARG_ENABLE(tests, AS_HELP_STRING([--disable-tests],[do not build the regression tests]))
 AC_ARG_ENABLE(maintainer-mode, AS_HELP_STRING([--enable-maintainer-mode],[enable maintainer-specific build rules]))
+AC_ARG_ENABLE(silent-rules, AS_HELP_STRING([--enable-silent-rules],[use silent build rules (override: "make V=1")]))
 AC_ARG_ENABLE(werror, AS_HELP_STRING([--enable-werror],[treat compilation warnings as errors]))
 
 AC_ARG_WITH(alsa,      AS_HELP_STRING([--without-alsa],[do not use the Alsa sound support]))
@@ -137,6 +138,7 @@ case $host in
     ;;
 esac
 
+AC_SUBST(TARGETFLAGS,"")
 case $host in
   x86_64*|amd64*)
     if test "x$enable_win64" != "xyes" -a "$cross_compiling" != "yes"
@@ -148,7 +150,7 @@ case $host in
       test $wine_cv_cc_m32 != no || AC_MSG_ERROR([Cannot build a 32-bit program, you need to install 32-bit development libraries.])
       host_cpu="i386"
       notice_platform="32-bit "
-      AC_SUBST(TARGETFLAGS,"-m32")
+      TARGETFLAGS="-m32"
       PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-/usr/lib/i386-linux-gnu/pkgconfig:/usr/lib32/pkgconfig:/usr/lib/pkgconfig}
       export PKG_CONFIG_PATH
       enable_win16=${enable_win16:-yes}
@@ -165,14 +167,21 @@ case $host in
       CXX="$CXX -m64"
       host_cpu="x86_64"
       notice_platform="64-bit "
-      AC_SUBST(TARGETFLAGS,"-m64")
+      TARGETFLAGS="-m64"
     fi
     ;;
   arm*)
-    AC_CACHE_CHECK([whether $CC supports Thumb],wine_cv_thumb,
-        [WINE_TRY_ASM_LINK([".thumb\nblx ac_test\n.arm"],[int ac_test(int i) { return i; }], [if (ac_test(1)) return 1],
-                           [wine_cv_thumb=yes],[wine_cv_thumb=no])])
-    test $wine_cv_thumb != no || AC_MSG_ERROR([You need a target with Thumb support to build Wine for ARM.])
+    AC_CACHE_CHECK([whether $CC supports Thumb-2],wine_cv_thumb2,
+        [WINE_TRY_ASM_LINK([".syntax unified\n\t.thumb\n\tldm r0,{r0-r8}"],,,
+                           [wine_cv_thumb2=yes],[wine_cv_thumb2=no])])
+    if test x"$wine_cv_thumb2" = xyes
+    then
+        CFLAGS="$CFLAGS -mthumb"
+        TARGETFLAGS="-mthumb"
+    else
+        CFLAGS="$CFLAGS -marm"
+        TARGETFLAGS="-marm"
+    fi
     case $with_float_abi in
       soft|softfp|hard)
         float_abi=$with_float_abi ;;
@@ -183,7 +192,7 @@ case $host in
           *)
             float_abi=softfp
             saved_CFLAGS=$CFLAGS
-            CFLAGS="$CFLAGS -marm -mfloat-abi=$float_abi"
+            CFLAGS="$CFLAGS -mfloat-abi=$float_abi"
             AC_CACHE_CHECK([whether $CC supports -mfloat-abi=$float_abi],wine_cv_float_abi,
                 [WINE_TRY_ASM_LINK(["vmrs r2,fpscr"],,,[wine_cv_float_abi=yes],[wine_cv_float_abi=no])])
             if test $wine_cv_float_abi = no
@@ -195,8 +204,8 @@ case $host in
         esac
         ;;
     esac
-    CFLAGS="$CFLAGS -marm -mfloat-abi=$float_abi"
-    AC_SUBST(TARGETFLAGS,"-marm -mfloat-abi=$float_abi")
+    CFLAGS="$CFLAGS -mfloat-abi=$float_abi"
+    TARGETFLAGS="$TARGETFLAGS -mfloat-abi=$float_abi"
     ;;
   aarch64*)
     AC_CACHE_CHECK([whether $CC supports __builtin_ms_va_list],wine_cv_builtin_ms_va_list,
@@ -247,7 +256,7 @@ else
 fi
 if test -n "$host_alias" -a "$host_alias" != "$build_alias"
 then
-    AC_SUBST(TARGETFLAGS,"-b $host_alias $TARGETFLAGS")
+    TARGETFLAGS="-b $host_alias $TARGETFLAGS"
 fi
 
 dnl Check for flex
@@ -863,24 +872,6 @@ case $host_os in
         LIBS="$LIBS $APPLICATIONSERVICES_LIBS"
         AC_CHECK_FUNC(CGDisplayModeGetWidth,enable_winemac_drv=${enable_winemac_drv:-yes})
         LIBS="$ac_save_LIBS"
-    fi
-
-    dnl Check for Xcode 3.x broken 16-bit support
-    if test "x$enable_win16" = "xyes"
-    then
-        AC_MSG_CHECKING([whether 16-bit code can be built correctly])
-        AC_RUN_IFELSE([AC_LANG_PROGRAM([[asm(".text\n"
-                                            "bad:\tnop;nop\n"
-                                            "good:\tnop;nop\n\t"
-                                            ".globl _testfunc\n"
-                                            "_testfunc:\tcallw good");
-                                        extern void testfunc();]],
-                                      [[unsigned short *p = (unsigned short *)testfunc;
-                                        return p[0] != 0xe866 || p[1] != 0xfffa]])],
-                                      AC_MSG_RESULT(yes),
-                                      [AC_MSG_RESULT(no)
-                                       AC_MSG_ERROR([Xcode 3.x cannot build 16-bit code correctly. Use --disable-win16 if you don't need 16-bit support.])],
-                                       AC_MSG_RESULT([[cross-compiling, assuming yes]]))
     fi
 
     AC_SUBST(LIBWINE_SHAREDLIB,"libwine.$libwine_version.dylib")
@@ -1685,6 +1676,8 @@ then
         if test "$wine_cv_have_unw_step" = no -a -n "$UNWIND_LIBS"
         then
             save_libs=$LIBS
+            dnl Force static libgcc, libunwind breaks libgcc_s unwinding
+            UNWIND_LIBS="-static-libgcc $UNWIND_LIBS"
             LIBS="$UNWIND_LIBS $LIBS"
             AC_CACHE_CHECK([for unw_step in libunwind],wine_cv_have_libunwind_unw_step,
                [AC_LINK_IFELSE([AC_LANG_PROGRAM([[#define UNW_LOCAL_ONLY
@@ -1978,7 +1971,7 @@ dnl **** Check for vkd3d ****
 if test "x$with_vkd3d" != "xno"
 then
     WINE_PACKAGE_FLAGS(VKD3D,[libvkd3d],,,,
-        [WINE_CHECK_SONAME(vkd3d,vkd3d_get_dxgi_format,,,[$VKD3D_LIBS])])
+        [WINE_CHECK_SONAME(vkd3d,vkd3d_serialize_versioned_root_signature,,,[$VKD3D_LIBS])])
     WINE_PACKAGE_FLAGS(VKD3D_SHADER,[libvkd3d-shader],,,,
         [WINE_CHECK_SONAME(vkd3d-shader,vkd3d_shader_compile,,,[$VKD3D_SHADER_LIBS])])
 fi
@@ -2075,7 +2068,8 @@ char*f(const char *h,char n) {return strchr(h,n);}]])],[ac_cv_c_logicalop_noisy=
   dnl Disable gcc builtins except for Mingw
   AC_SUBST(MSVCRTFLAGS,"")
   case $host_os in
-    mingw32*) ;;
+    mingw32*)  dnl Check for delayload linker support
+       WINE_TRY_CFLAGS([-Wl,-delayload,autoconftest.dll],[AC_SUBST(DELAYLOADFLAG,["-Wl,-delayload,"])]) ;;
     *) WINE_TRY_CFLAGS([-fno-builtin],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-builtin"])
        WINE_TRY_CFLAGS([-fshort-wchar],[MSVCRTFLAGS="$MSVCRTFLAGS -fshort-wchar"]) ;;
   esac
@@ -2737,6 +2731,9 @@ AC_SUBST([ALL_VARS_RULES],
 "m4_set_foreach([_AC_SUBST_VARS],[var],[m4_if(m4_bregexp(m4_defn([var]),[\(_CFLAGS\|_LIBS\)$]),-1,,[var = $var
 ])])")
 
+makedep_flags=""
+test "x$enable_silent_rules" = xyes && makedep_flags="$makedep_flags -S"
+
 dnl Main makefile
 
 WINE_APPEND_RULE([
@@ -2748,7 +2745,7 @@ all: Makefile
 Makefile: $srcdir/Makefile.in config.status \$(MAKEDEP)
 	@./config.status Make.tmp Makefile
 depend: \$(MAKEDEP)
-	\$(MAKEDEP)
+	\$(MAKEDEP)$makedep_flags
 dummy:
 .PHONY: depend dummy])
 
@@ -4047,7 +4044,7 @@ fi
 AC_CONFIG_COMMANDS([Makefile], [wine_fn_output_makefile Makefile],
 [wine_fn_output_makefile ()
 {
-    cat Make.tmp - <<\_WINE_EOF >\$tmp/makefile && mv -f \$tmp/makefile \$[]1 && rm -f Make.tmp && "$wine_makedep" && return
+    cat Make.tmp - <<\_WINE_EOF >\$tmp/makefile && mv -f \$tmp/makefile \$[]1 && rm -f Make.tmp && "$wine_makedep"$makedep_flags && return
 `cat $wine_rules_file`
 _WINE_EOF
     AS_ERROR([could not create Makefile])
@@ -4103,9 +4100,6 @@ else
     TOP_INSTALL_LIB="$TOP_INSTALL_LIB \
 fonts \
 loader/wine.inf \
-loader/winebus.inf \
-loader/winehid.inf \
-loader/wineusb.inf \
 nls \
 programs/msidb/msidb \
 programs/msiexec/msiexec \

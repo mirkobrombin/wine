@@ -2601,7 +2601,7 @@ static UINT CDECL freetype_get_default_glyph( struct gdi_font *font )
     if ((pOS2 = pFT_Get_Sfnt_Table( ft_face, ft_sfnt_os2 )))
     {
         UINT glyph = pOS2->usDefaultChar;
-        freetype_get_glyph_index( font, &glyph, TRUE );
+        if (glyph) freetype_get_glyph_index( font, &glyph, TRUE );
         return glyph;
     }
     if (!pFT_Get_WinFNT_Header( ft_face, &winfnt )) return winfnt.default_char + winfnt.first_char;
@@ -3514,6 +3514,8 @@ static DWORD CDECL freetype_get_glyph_outline( struct gdi_font *font, UINT glyph
     TRACE("font transform %f %f %f %f\n",
           font->matrix.eM11, font->matrix.eM12,
           font->matrix.eM21, font->matrix.eM22);
+
+    format &= ~GGO_UNHINTED;
 
     needsTransform = get_transform_matrices( font, tategaki, lpmat, matrices );
 
